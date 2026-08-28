@@ -9,23 +9,11 @@ test_expect_success 'start p4d' '
 '
 
 # We rely on this behavior to detect for p4 move availability.
-test_expect_success 'p4 help unknown returns 1' '
+test_expect_success '"p4 help unknown" errors out' '
 	(
 		cd "$cli" &&
-		(
-			p4 help client >errs 2>&1
-			echo $? >retval
-		)
-		echo 0 >expected &&
-		test_cmp expected retval &&
-		rm retval &&
-		(
-			p4 help nosuchcommand >errs 2>&1
-			echo $? >retval
-		)
-		echo 1 >expected &&
-		test_cmp expected retval &&
-		rm retval
+		p4 help client &&
+		! p4 help nosuchcommand
 	)
 '
 
@@ -78,7 +66,7 @@ test_expect_success 'detect renames' '
 		git diff-tree -r -M HEAD &&
 		git p4 submit &&
 		p4 filelog //depot/file4 >filelog &&
-		! grep " from //depot" filelog &&
+		test_grep ! " from //depot" filelog &&
 
 		git mv file4 file5 &&
 		git commit -a -m "Rename file4 to file5" &&
@@ -86,7 +74,7 @@ test_expect_success 'detect renames' '
 		git config git-p4.detectRenames true &&
 		git p4 submit &&
 		p4 filelog //depot/file5 >filelog &&
-		grep " from //depot/file4" filelog &&
+		test_grep " from //depot/file4" filelog &&
 
 		git mv file5 file6 &&
 		echo update >>file6 &&
@@ -98,7 +86,7 @@ test_expect_success 'detect renames' '
 		git config git-p4.detectRenames $(($level + 2)) &&
 		git p4 submit &&
 		p4 filelog //depot/file6 >filelog &&
-		! grep " from //depot" filelog &&
+		test_grep ! " from //depot" filelog &&
 
 		git mv file6 file7 &&
 		echo update >>file7 &&
@@ -110,7 +98,7 @@ test_expect_success 'detect renames' '
 		git config git-p4.detectRenames $(($level - 2)) &&
 		git p4 submit &&
 		p4 filelog //depot/file7 >filelog &&
-		grep " from //depot/file6" filelog
+		test_grep " from //depot/file6" filelog
 	)
 '
 
@@ -228,7 +216,7 @@ test_expect_success 'detect copies' '
 # variable exists, which allows admins to disable the "p4 move" command.
 test_lazy_prereq P4D_HAVE_CONFIGURABLE_RUN_MOVE_ALLOW '
 	p4 configure show run.move.allow >out &&
-	egrep ^run.move.allow: out
+	grep -E ^run.move.allow: out
 '
 
 # If move can be disabled, turn it off and test p4 move handling
@@ -252,10 +240,6 @@ test_expect_success P4D_HAVE_CONFIGURABLE_RUN_MOVE_ALLOW \
 		git commit -m "move move-disallow-file" &&
 		git p4 submit
 	)
-'
-
-test_expect_success 'kill p4d' '
-	kill_p4d
 '
 
 test_done

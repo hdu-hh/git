@@ -1,15 +1,16 @@
 #!/bin/sh
 
 test_description='bounds-checking of access to mmapped on-disk file formats'
+
 . ./test-lib.sh
 
 clear_base () {
 	test_when_finished 'restore_base' &&
-	rm -f $base
+	rm -r -f $base
 }
 
 restore_base () {
-	cp base-backup/* .git/objects/pack/
+	cp -r base-backup/* .git/objects/pack/
 }
 
 do_pack () {
@@ -38,23 +39,33 @@ munge () {
 # for the initial, and another ofs(4*nr) past that for the extended.
 #
 ofs_table () {
-	echo $((4 + 4 + 4*256 + 20*$1 + 4*$1))
+	echo $((4 + 4 + 4*256 + $(test_oid rawsz)*$1 + 4*$1))
 }
 extended_table () {
 	echo $(($(ofs_table "$1") + 4*$1))
 }
 
+test_expect_success 'setup' '
+	test_oid_cache <<-EOF
+	oid000 sha1:1485
+	oid000 sha256:4222
+
+	oidfff sha1:74
+	oidfff sha256:1350
+	EOF
+'
+
 test_expect_success 'set up base packfile and variables' '
 	# the hash of this content starts with ff, which
 	# makes some later computations much simpler
-	echo 74 >file &&
+	test_oid oidfff >file &&
 	git add file &&
 	git commit -m base &&
 	git repack -ad &&
 	base=$(echo .git/objects/pack/*) &&
-	chmod +w $base &&
+	chmod -R +w $base &&
 	mkdir base-backup &&
-	cp $base base-backup/ &&
+	cp -r $base base-backup/ &&
 	object=$(git rev-parse HEAD:file)
 '
 
@@ -90,9 +101,8 @@ test_expect_success 'matched bogus object count' '
 
 	# Unlike above, we should notice early that the .idx is totally
 	# bogus, and not even enumerate its contents.
-	>expect &&
 	git cat-file --batch-all-objects --batch-check >actual &&
-	test_cmp expect actual &&
+	test_must_be_empty actual &&
 
 	# But as before, we can do the same object-access checks.
 	test_must_fail git cat-file blob $object &&
@@ -141,10 +151,10 @@ test_expect_success 'bogus offset inside v2 extended table' '
 	# an extended table (if the first object were larger than 2^31).
 	#
 	# Note that the value is important here. We want $object as
-	# the second entry in sorted-sha1 order. The sha1 of 1485 starts
+	# the second entry in sorted-hash order. The hash of this object starts
 	# with "000", which sorts before that of $object (which starts
 	# with "fff").
-	second=$(echo 1485 | git hash-object -w --stdin) &&
+	second=$(test_oid oid000 | git hash-object -w --stdin) &&
 	do_pack "$object $second" --index-version=2 &&
 
 	# We have to make extra room for the table, so we cannot
@@ -163,8 +173,8 @@ test_expect_success 'bogus offset inside v2 extended table' '
 
 test_expect_success 'bogus OFS_DELTA in packfile' '
 	# Generate a pack with a delta in it.
-	base=$(test-genrandom foo 3000 | git hash-object --stdin -w) &&
-	delta=$(test-genrandom foo 2000 | git hash-object --stdin -w) &&
+	base=$(test-tool genrandom foo 3000 | git hash-object --stdin -w) &&
+	delta=$(test-tool genrandom foo 2000 | git hash-object --stdin -w) &&
 	do_pack "$base $delta" --delta-base-offset &&
 	rm -f .git/objects/??/* &&
 

@@ -5,16 +5,19 @@ test_description='git mktree'
 . ./test-lib.sh
 
 test_expect_success setup '
-	for d in a a. a0
+	for d in a a- a0
 	do
 		mkdir "$d" && echo "$d/one" >"$d/one" &&
-		git add "$d"
+		git add "$d" || return 1
 	done &&
 	echo zero >one &&
-	git update-index --add --info-only one &&
-	git write-tree --missing-ok >tree.missing &&
-	git ls-tree $(cat tree.missing) >top.missing &&
-	git ls-tree -r $(cat tree.missing) >all.missing &&
+	if test_have_prereq BROKEN_OBJECTS
+	then
+		git update-index --add --info-only one &&
+		git write-tree --missing-ok >tree.missing &&
+		git ls-tree $(cat tree.missing) >top.missing &&
+		git ls-tree -r $(cat tree.missing) >all.missing
+	fi &&
 	echo one >one &&
 	git add one &&
 	git write-tree >tree &&
@@ -42,28 +45,28 @@ test_expect_success 'ls-tree piped to mktree (2)' '
 '
 
 test_expect_success 'ls-tree output in wrong order given to mktree (1)' '
-	perl -e "print reverse <>" <top |
+	sort -r <top |
 	git mktree >actual &&
 	test_cmp tree actual
 '
 
 test_expect_success 'ls-tree output in wrong order given to mktree (2)' '
-	perl -e "print reverse <>" <top.withsub |
+	sort -r <top.withsub |
 	git mktree >actual &&
 	test_cmp tree.withsub actual
 '
 
-test_expect_success 'allow missing object with --missing' '
+test_expect_success BROKEN_OBJECTS 'allow missing object with --missing' '
 	git mktree --missing <top.missing >actual &&
 	test_cmp tree.missing actual
 '
 
 test_expect_success 'mktree refuses to read ls-tree -r output (1)' '
-	test_must_fail git mktree <all >actual
+	test_must_fail git mktree <all
 '
 
 test_expect_success 'mktree refuses to read ls-tree -r output (2)' '
-	test_must_fail git mktree <all.withsub >actual
+	test_must_fail git mktree <all.withsub
 '
 
 test_done

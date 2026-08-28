@@ -31,21 +31,21 @@ do
 		rm -f .git/index &&
 		test_must_fail git add "$i" 2>err &&
 		git ls-files "$i" >out &&
-		! test -s out
+		test_must_be_empty out
 	'
 
 	test_expect_success "complaints for ignored $i output" '
-		test_i18ngrep -e "Use -f if" err
+		test_grep -e "Use -f if" err
 	'
 
 	test_expect_success "complaints for ignored $i with unignored file" '
 		rm -f .git/index &&
 		test_must_fail git add "$i" file 2>err &&
 		git ls-files "$i" >out &&
-		! test -s out
+		test_must_be_empty out
 	'
 	test_expect_success "complaints for ignored $i with unignored file output" '
-		test_i18ngrep -e "Use -f if" err
+		test_grep -e "Use -f if" err
 	'
 done
 
@@ -57,14 +57,14 @@ do
 			cd dir &&
 			test_must_fail git add "$i" 2>err &&
 			git ls-files "$i" >out &&
-			! test -s out
+			test_must_be_empty out
 		)
 	'
 
 	test_expect_success "complaints for ignored $i in dir output" '
 		(
 			cd dir &&
-			test_i18ngrep -e "Use -f if" err
+			test_grep -e "Use -f if" err
 		)
 	'
 done
@@ -77,14 +77,14 @@ do
 			cd sub &&
 			test_must_fail git add "$i" 2>err &&
 			git ls-files "$i" >out &&
-			! test -s out
+			test_must_be_empty out
 		)
 	'
 
 	test_expect_success "complaints for ignored $i in sub output" '
 		(
 			cd sub &&
-			test_i18ngrep -e "Use -f if" err
+			test_grep -e "Use -f if" err
 		)
 	'
 done

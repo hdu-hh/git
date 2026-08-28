@@ -1,7 +1,11 @@
 #ifndef REFS_REF_CACHE_H
 #define REFS_REF_CACHE_H
 
+#include "hash.h"
+
 struct ref_dir;
+struct ref_store;
+struct repository;
 
 /*
  * If this ref_cache is filled lazily, this function is used to load
@@ -38,14 +42,7 @@ struct ref_value {
 	 * referred to by the last reference in the symlink chain.
 	 */
 	struct object_id oid;
-
-	/*
-	 * If REF_KNOWS_PEELED, then this field holds the peeled value
-	 * of this reference, or null if the reference is known not to
-	 * be peelable.  See the documentation for peel_ref() for an
-	 * exact definition of "peelable".
-	 */
-	struct object_id peeled;
+	char *referent;
 };
 
 /*
@@ -97,21 +94,14 @@ struct ref_dir {
  * public values; see refs.h.
  */
 
-/*
- * The field ref_entry->u.value.peeled of this value entry contains
- * the correct peeled value for the reference, which might be
- * null_sha1 if the reference is not a tag or if it is broken.
- */
-#define REF_KNOWS_PEELED 0x10
-
 /* ref_entry represents a directory of references */
-#define REF_DIR 0x20
+#define REF_DIR 0x10
 
 /*
  * Entry has not yet been read from disk (used only for REF_DIR
  * entries representing loose references)
  */
-#define REF_INCOMPLETE 0x40
+#define REF_INCOMPLETE 0x20
 
 /*
  * A ref_entry represents either a reference or a "subdirectory" of
@@ -181,10 +171,10 @@ struct ref_dir *get_ref_dir(struct ref_entry *entry);
  * "refs/heads/") or "" for the top-level directory.
  */
 struct ref_entry *create_dir_entry(struct ref_cache *cache,
-				   const char *dirname, size_t len,
-				   int incomplete);
+				   const char *dirname, size_t len);
 
 struct ref_entry *create_ref_entry(const char *refname,
+				   const char *referent,
 				   const struct object_id *oid, int flag);
 
 /*
@@ -212,56 +202,15 @@ void free_ref_cache(struct ref_cache *cache);
 void add_entry_to_dir(struct ref_dir *dir, struct ref_entry *entry);
 
 /*
- * Remove the entry with the given name from dir, recursing into
- * subdirectories as necessary.  If refname is the name of a directory
- * (i.e., ends with '/'), then remove the directory and its contents.
- * If the removal was successful, return the number of entries
- * remaining in the directory entry that contained the deleted entry.
- * If the name was not found, return -1.  Please note that this
- * function only deletes the entry from the cache; it does not delete
- * it from the filesystem or ensure that other cache entries (which
- * might be symbolic references to the removed entry) are updated.
- * Nor does it remove any containing dir entries that might be made
- * empty by the removal.  dir must represent the top-level directory
- * and must already be complete.
- */
-int remove_entry_from_dir(struct ref_dir *dir, const char *refname);
-
-/*
- * Add a ref_entry to the ref_dir (unsorted), recursing into
- * subdirectories as necessary.  dir must represent the top-level
- * directory.  Return 0 on success.
- */
-int add_ref_entry(struct ref_dir *dir, struct ref_entry *ref);
-
-/*
- * Find the value entry with the given name in dir, sorting ref_dirs
- * and recursing into subdirectories as necessary.  If the name is not
- * found or it corresponds to a directory entry, return NULL.
- */
-struct ref_entry *find_ref_entry(struct ref_dir *dir, const char *refname);
-
-/*
  * Start iterating over references in `cache`. If `prefix` is
  * specified, only include references whose names start with that
  * prefix. If `prime_dir` is true, then fill any incomplete
- * directories before beginning the iteration.
+ * directories before beginning the iteration. The output is ordered
+ * by refname.
  */
 struct ref_iterator *cache_ref_iterator_begin(struct ref_cache *cache,
 					      const char *prefix,
+					      struct repository *repo,
 					      int prime_dir);
-
-/*
- * Peel the entry (if possible) and return its new peel_status.  If
- * repeel is true, re-peel the entry even if there is an old peeled
- * value that is already stored in it.
- *
- * It is OK to call this function with a packed reference entry that
- * might be stale and might even refer to an object that has since
- * been garbage-collected.  In such a case, if the entry has
- * REF_KNOWS_PEELED then leave the status unchanged and return
- * PEEL_PEELED or PEEL_NON_TAG; otherwise, return PEEL_INVALID.
- */
-enum peel_status peel_entry(struct ref_entry *entry, int repeel);
 
 #endif /* REFS_REF_CACHE_H */

@@ -19,7 +19,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, see
- * <http://www.gnu.org/licenses/>.
+ * <https://www.gnu.org/licenses/>.
  */
 
 #ifndef LIST_H
@@ -46,7 +46,10 @@ struct list_head {
 #define INIT_LIST_HEAD(ptr) \
 	(ptr)->next = (ptr)->prev = (ptr)
 
-#define LIST_HEAD_INIT(name) { &(name), &(name) }
+#define LIST_HEAD_INIT(name) { \
+	.next = &(name), \
+	.prev = &(name), \
+}
 
 /* Add new element at the head of the list. */
 static inline void list_add(struct list_head *newp, struct list_head *head)
@@ -161,6 +164,44 @@ static inline void list_replace_init(struct list_head *old,
 	list_del(old);
 	list_add_tail(newp, head);
 	INIT_LIST_HEAD(old);
+}
+
+/*
+ * This is exactly the same as a normal list_head, except that it can be
+ * declared volatile (e.g., if you have a list that may be accessed from signal
+ * handlers).
+ */
+struct volatile_list_head {
+	volatile struct volatile_list_head *next, *prev;
+};
+
+#define VOLATILE_LIST_HEAD(name) \
+	volatile struct volatile_list_head name = { &(name), &(name) }
+
+static inline void __volatile_list_del(volatile struct volatile_list_head *prev,
+				       volatile struct volatile_list_head *next)
+{
+	next->prev = prev;
+	prev->next = next;
+}
+
+static inline void volatile_list_del(volatile struct volatile_list_head *elem)
+{
+	__volatile_list_del(elem->prev, elem->next);
+}
+
+static inline int volatile_list_empty(volatile struct volatile_list_head *head)
+{
+	return head == head->next;
+}
+
+static inline void volatile_list_add(volatile struct volatile_list_head *newp,
+				     volatile struct volatile_list_head *head)
+{
+	head->next->prev = newp;
+	newp->next = head->next;
+	newp->prev = head;
+	head->next = newp;
 }
 
 #endif /* LIST_H */

@@ -1,57 +1,100 @@
 package DiffHighlight;
 
-use 5.008;
+require v5.008;
 use warnings FATAL => 'all';
 use strict;
 
-# Highlight by reversing foreground and background. You could do
-# other things like bold or underline if you prefer.
-my @OLD_HIGHLIGHT = (
-	color_config('color.diff-highlight.oldnormal'),
-	color_config('color.diff-highlight.oldhighlight', "\x1b[7m"),
-	color_config('color.diff-highlight.oldreset', "\x1b[27m")
-);
-my @NEW_HIGHLIGHT = (
-	color_config('color.diff-highlight.newnormal', $OLD_HIGHLIGHT[0]),
-	color_config('color.diff-highlight.newhighlight', $OLD_HIGHLIGHT[1]),
-	color_config('color.diff-highlight.newreset', $OLD_HIGHLIGHT[2])
-);
+# Use the correct value for both UNIX and Windows (/dev/null vs nul)
+use File::Spec;
+
+my $NULL = File::Spec->devnull();
+
+# The color theme is initially set to nothing here to allow outside callers
+# to set the colors for their application. If nothing is sent in we use
+# colors from git config in load_color_config().
+our @OLD_HIGHLIGHT = ();
+our @NEW_HIGHLIGHT = ();
 
 my $RESET = "\x1b[m";
 my $COLOR = qr/\x1b\[[0-9;]*m/;
 my $BORING = qr/$COLOR|\s/;
 
-# The patch portion of git log -p --graph should only ever have preceding | and
-# not / or \ as merge history only shows up on the commit line.
-my $GRAPH = qr/$COLOR?\|$COLOR?\s+/;
-
 my @removed;
 my @added;
 my $in_hunk;
+my $graph_indent = 0;
 
 our $line_cb = sub { print @_ };
 our $flush_cb = sub { local $| = 1 };
 
-sub handle_line {
+# Count the visible width of a string, excluding any terminal color sequences.
+sub visible_width {
 	local $_ = shift;
+	my $ret = 0;
+	while (length) {
+		if (s/^$COLOR//) {
+			# skip colors
+		} elsif (s/^.//) {
+			$ret++;
+		}
+	}
+	return $ret;
+}
+
+# Return a substring of $str, omitting $len visible characters from the
+# beginning, where terminal color sequences do not count as visible.
+sub visible_substr {
+	my ($str, $len) = @_;
+	while ($len > 0) {
+		if ($str =~ s/^$COLOR//) {
+			next
+		}
+		$str =~ s/^.//;
+		$len--;
+	}
+	return $str;
+}
+
+sub handle_line {
+	my $orig = shift;
+	local $_ = $orig;
+
+	# match a graph line that begins a commit
+	if (/^(?:$COLOR?\|$COLOR?[ ])* # zero or more leading "|" with space
+	         $COLOR?\*$COLOR?[ ]   # a "*" with its trailing space
+	      (?:$COLOR?\|$COLOR?[ ])* # zero or more trailing "|"
+	                         [ ]*  # trailing whitespace for merges
+	    /x) {
+		my $graph_prefix = $&;
+
+		# We must flush before setting graph indent, since the
+		# new commit may be indented differently from what we
+		# queued.
+		flush();
+		$graph_indent = visible_width($graph_prefix);
+
+	} elsif ($graph_indent) {
+		if (length($_) < $graph_indent) {
+			$graph_indent = 0;
+		} else {
+			$_ = visible_substr($_, $graph_indent);
+		}
+	}
 
 	if (!$in_hunk) {
-		$line_cb->($_);
-		$in_hunk = /^$GRAPH*$COLOR*\@\@ /;
+		$line_cb->($orig);
+		$in_hunk = /^$COLOR*\@\@ /;
 	}
-	elsif (/^$GRAPH*$COLOR*-/) {
-		push @removed, $_;
+	elsif (/^$COLOR*-/) {
+		push @removed, $orig;
 	}
-	elsif (/^$GRAPH*$COLOR*\+/) {
-		push @added, $_;
+	elsif (/^$COLOR*\+/) {
+		push @added, $orig;
 	}
 	else {
-		show_hunk(\@removed, \@added);
-		@removed = ();
-		@added = ();
-
-		$line_cb->($_);
-		$in_hunk = /^$GRAPH*$COLOR*[\@ ]/;
+		flush();
+		$line_cb->($orig);
+		$in_hunk = /^$COLOR*[\@ ]/;
 	}
 
 	# Most of the time there is enough output to keep things streaming,
@@ -62,7 +105,7 @@ sub handle_line {
 	# Since we can receive arbitrary input, there's no optimal
 	# place to flush. Flushing on a blank line is a heuristic that
 	# happens to match git-log output.
-	if (!length) {
+	if (/^$/) {
 		$flush_cb->();
 	}
 }
@@ -71,6 +114,8 @@ sub flush {
 	# Flush any queued hunk (this can happen when there is no trailing
 	# context in the final diff of the input).
 	show_hunk(\@removed, \@added);
+	@removed = ();
+	@added = ();
 }
 
 sub highlight_stdin {
@@ -86,9 +131,21 @@ sub highlight_stdin {
 # of it being used in other settings. Let's handle our own
 # fallback, which means we will work even if git can't be run.
 sub color_config {
+	our $cached_config;
 	my ($key, $default) = @_;
-	my $s = `git config --get-color $key 2>/dev/null`;
-	return length($s) ? $s : $default;
+
+	if (!defined $cached_config) {
+		$cached_config = {};
+		my $data = `git config --type=color --get-regexp '^color\.diff-highlight\.' 2>$NULL`;
+		for my $line (split /\n/, $data) {
+			my ($key, $color) = split ' ', $line, 2;
+			$key =~ s/^color\.diff-highlight\.// or next;
+			$cached_config->{$key} = $color;
+		}
+	}
+
+	my $s = $cached_config->{$key};
+	return defined($s) ? $s : $default;
 }
 
 sub show_hunk {
@@ -116,6 +173,29 @@ sub show_hunk {
 		push @queue, $add;
 	}
 	$line_cb->(@queue);
+}
+
+sub load_color_config {
+	# If the colors were NOT set from outside this module we load them on-demand
+	# from the git config. Note that only one of elements 0 and 2 in each
+	# array is used (depending on whether you are doing set/unset on an
+	# attribute, or specifying normal vs highlighted coloring). So we use
+	# element 1 as our check for whether colors were passed in; it should
+	# always be set if you want highlighting to do anything.
+	if (!defined $OLD_HIGHLIGHT[1]) {
+		@OLD_HIGHLIGHT = (
+			color_config('oldnormal'),
+			color_config('oldhighlight', "\x1b[7m"),
+			color_config('oldreset', "\x1b[27m")
+		);
+	}
+	if (!defined $NEW_HIGHLIGHT[1]) {
+		@NEW_HIGHLIGHT = (
+			color_config('newnormal', $OLD_HIGHLIGHT[0]),
+			color_config('newhighlight', $OLD_HIGHLIGHT[1]),
+			color_config('newreset', $OLD_HIGHLIGHT[2])
+		);
+	};
 }
 
 sub highlight_pair {
@@ -166,6 +246,7 @@ sub highlight_pair {
 	}
 
 	if (is_pair_interesting(\@a, $pa, $sa, \@b, $pb, $sb)) {
+		load_color_config();
 		return highlight_line(\@a, $pa, $sa, \@OLD_HIGHLIGHT),
 		       highlight_line(\@b, $pb, $sb, \@NEW_HIGHLIGHT);
 	}
@@ -221,13 +302,25 @@ sub highlight_line {
 # or suffix (disregarding boring bits like whitespace and colorization).
 sub is_pair_interesting {
 	my ($a, $pa, $sa, $b, $pb, $sb) = @_;
+
+	# We hit this case if the prefix consumed the entire line, meaning
+	# that two lines are identical. This generally shouldn't happen,
+	# since it implies the diff isn't minimal (you could shrink the hunk by
+	# making this a context line). But you can see it when the line
+	# content is the same, but the trailing newline is dropped, like:
+	#
+	#   -foo
+	#   +foo
+	#   \No newline at end of file
+	return 0 if $pa == @$a || $pb == @$b;
+
 	my $prefix_a = join('', @$a[0..($pa-1)]);
 	my $prefix_b = join('', @$b[0..($pb-1)]);
 	my $suffix_a = join('', @$a[($sa+1)..$#$a]);
 	my $suffix_b = join('', @$b[($sb+1)..$#$b]);
 
-	return $prefix_a !~ /^$GRAPH*$COLOR*-$BORING*$/ ||
-	       $prefix_b !~ /^$GRAPH*$COLOR*\+$BORING*$/ ||
+	return visible_substr($prefix_a, $graph_indent) !~ /^$COLOR*-$BORING*$/ ||
+	       visible_substr($prefix_b, $graph_indent) !~ /^$COLOR*\+$BORING*$/ ||
 	       $suffix_a !~ /^$BORING*$/ ||
 	       $suffix_b !~ /^$BORING*$/;
 }

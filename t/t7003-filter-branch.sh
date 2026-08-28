@@ -1,6 +1,9 @@
 #!/bin/sh
 
 test_description='git filter-branch'
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
 . "$TEST_DIRECTORY/lib-gpg.sh"
 
@@ -13,7 +16,7 @@ test_expect_success 'setup' '
 	mkdir dir &&
 	test_commit dir/D &&
 	test_commit E &&
-	git checkout master &&
+	git checkout main &&
 	test_commit C &&
 	git checkout branch &&
 	git merge C &&
@@ -25,7 +28,7 @@ test_expect_success 'setup' '
 # * G
 # *   Merge commit 'C' into branch
 # |\
-# | * (master) C
+# | * (main) C
 # * | E
 # * | dir/D
 # * | D
@@ -46,7 +49,7 @@ test_expect_success 'result is really identical' '
 test_expect_success 'rewrite bare repository identically' '
 	(git config core.bare true && cd .git &&
 	 git filter-branch branch > filter-output 2>&1 &&
-	! fgrep fatal filter-output)
+	test_grep ! fatal filter-output)
 '
 git config core.bare false
 test_expect_success 'result is really identical' '
@@ -62,7 +65,7 @@ test_expect_success 'correct GIT_DIR while using -d' '
 	git filter-branch -d "$TRASHDIR/dfoo" \
 		--index-filter "cp \"$TRASHDIR\"/dfoo/backup-refs \"$TRASHDIR\"" \
 	) &&
-	grep drepo "$TRASHDIR/backup-refs"
+	test_grep drepo "$TRASHDIR/backup-refs"
 '
 
 test_expect_success 'tree-filter works with -d' '
@@ -89,8 +92,8 @@ test_expect_success 'rewrite, renaming a specific file' '
 
 test_expect_success 'test that the file was renamed' '
 	test D = "$(git show HEAD:doh --)" &&
-	! test -f D.t &&
-	test -f doh &&
+	test_path_is_missing D.t &&
+	test_path_is_file doh &&
 	test D = "$(cat doh)"
 '
 
@@ -100,11 +103,26 @@ test_expect_success 'rewrite, renaming a specific directory' '
 
 test_expect_success 'test that the directory was renamed' '
 	test dir/D = "$(git show HEAD:diroh/D.t --)" &&
-	! test -d dir &&
-	test -d diroh &&
-	! test -d diroh/dir &&
-	test -f diroh/D.t &&
+	test_path_is_missing dir &&
+	test_path_is_dir diroh &&
+	test_path_is_missing diroh/dir &&
+	test_path_is_file diroh/D.t &&
 	test dir/D = "$(cat diroh/D.t)"
+'
+
+V=$(git rev-parse HEAD)
+
+test_expect_success 'populate --state-branch' '
+	git filter-branch --state-branch state -f --tree-filter "touch file || :" HEAD
+'
+
+W=$(git rev-parse HEAD)
+
+test_expect_success 'using --state-branch to skip already rewritten commits' '
+	test_when_finished git reset --hard $V &&
+	git reset --hard $V &&
+	git filter-branch --state-branch state -f --tree-filter "touch file || :" HEAD &&
+	test_cmp_rev $W HEAD
 '
 
 git tag oldD HEAD~4
@@ -147,15 +165,15 @@ test_expect_success 'subdirectory filter result looks okay' '
 '
 
 test_expect_success 'more setup' '
-	git checkout master &&
+	git checkout main &&
 	mkdir subdir &&
 	echo A > subdir/new &&
 	git add subdir/new &&
 	test_tick &&
-	git commit -m "subdir on master" subdir/new &&
+	git commit -m "subdir on main" subdir/new &&
 	git rm A.t &&
 	test_tick &&
-	git commit -m "again subdir on master" &&
+	git commit -m "again subdir on main" &&
 	git merge branch
 '
 
@@ -184,10 +202,11 @@ test_expect_success 'author information is preserved' '
 	git branch preserved-author &&
 	(sane_unset GIT_AUTHOR_NAME &&
 	 git filter-branch -f --msg-filter "cat; \
-			test \$GIT_COMMIT != $(git rev-parse master) || \
+			test \$GIT_COMMIT != $(git rev-parse main) || \
 			echo Hallo" \
 		preserved-author) &&
-	test 1 = $(git rev-list --author="B V Uips" preserved-author | wc -l)
+	git rev-list --author="B V Uips" preserved-author >actual &&
+	test_line_count = 1 actual
 '
 
 test_expect_success "remove a certain author's commits" '
@@ -202,14 +221,15 @@ test_expect_success "remove a certain author's commits" '
 		else\
 			git commit-tree \"\$@\";\
 		fi" removed-author &&
-	cnt1=$(git rev-list master | wc -l) &&
+	cnt1=$(git rev-list main | wc -l) &&
 	cnt2=$(git rev-list removed-author | wc -l) &&
 	test $cnt1 -eq $(($cnt2 + 1)) &&
-	test 0 = $(git rev-list --author="B V Uips" removed-author | wc -l)
+	git rev-list --author="B V Uips" removed-author >actual &&
+	test_line_count = 0 actual
 '
 
 test_expect_success 'barf on invalid name' '
-	test_must_fail git filter-branch -f master xy-problem &&
+	test_must_fail git filter-branch -f main xy-problem &&
 	test_must_fail git filter-branch -f HEAD^
 '
 
@@ -219,8 +239,8 @@ test_expect_success '"map" works in commit filter' '
 		mapped=\$(map \$parent) &&
 		actual=\$(echo \"\$@\" | sed \"s/^.*-p //\") &&
 		test \$mapped = \$actual &&
-		git commit-tree \"\$@\";" master~2..master &&
-	git rev-parse --verify master
+		git commit-tree \"\$@\";" main~2..main &&
+	git rev-parse --verify main
 '
 
 test_expect_success 'Name needing quotes' '
@@ -239,7 +259,7 @@ test_expect_success 'Name needing quotes' '
 
 test_expect_success 'Subdirectory filter with disappearing trees' '
 	git reset --hard &&
-	git checkout master &&
+	git checkout main &&
 
 	mkdir foo &&
 	touch foo/bar &&
@@ -258,7 +278,8 @@ test_expect_success 'Subdirectory filter with disappearing trees' '
 	git commit -m "Re-adding foo" &&
 
 	git filter-branch -f --subdirectory-filter foo &&
-	test $(git rev-list master | wc -l) = 3
+	git rev-list main >actual &&
+	test_line_count = 3 actual
 '
 
 test_expect_success 'Tag name filtering retains tag message' '
@@ -314,7 +335,7 @@ test_expect_success 'Tag name filtering allows slashes in tag names' '
 	test_cmp expect actual
 '
 test_expect_success 'setup --prune-empty comparisons' '
-	git checkout --orphan master-no-a &&
+	git checkout --orphan main-no-a &&
 	git rm -rf . &&
 	unset test_tick &&
 	test_tick &&
@@ -325,7 +346,7 @@ test_expect_success 'setup --prune-empty comparisons' '
 	mkdir dir &&
 	test_commit dir/D dir/D.t dir/D dir/Dx &&
 	test_commit E E.t E Ex &&
-	git checkout master-no-a &&
+	git checkout main-no-a &&
 	test_commit C C.t C Cx &&
 	git checkout branch-no-a &&
 	git merge Cx -m "Merge tag '\''C'\'' into branch" &&
@@ -374,12 +395,12 @@ test_expect_success '--prune-empty is able to prune root commit' '
 test_expect_success '--prune-empty is able to prune entire branch' '
 	git branch prune-entire B &&
 	git filter-branch -f --prune-empty --index-filter "git update-index --remove A.t B.t" prune-entire &&
-	test_path_is_missing .git/refs/heads/prune-entire &&
+	test_must_fail git rev-parse refs/heads/prune-entire &&
 	test_must_fail git reflog exists refs/heads/prune-entire
 '
 
 test_expect_success '--remap-to-ancestor with filename filters' '
-	git checkout master &&
+	git checkout main &&
 	git reset --hard A &&
 	test_commit add-foo foo 1 &&
 	git branch moved-foo &&
@@ -389,15 +410,15 @@ test_expect_success '--remap-to-ancestor with filename filters' '
 	git branch moved-bar &&
 	test_commit change-foo foo 2 &&
 	git filter-branch -f --remap-to-ancestor \
-		moved-foo moved-bar A..master \
+		moved-foo moved-bar A..main \
 		-- -- foo &&
 	test $(git rev-parse moved-foo) = $(git rev-parse moved-bar) &&
-	test $(git rev-parse moved-foo) = $(git rev-parse master^) &&
+	test $(git rev-parse moved-foo) = $(git rev-parse main^) &&
 	test $orig_invariant = $(git rev-parse invariant)
 '
 
 test_expect_success 'automatic remapping to ancestor with filename filters' '
-	git checkout master &&
+	git checkout main &&
 	git reset --hard A &&
 	test_commit add-foo2 foo 1 &&
 	git branch moved-foo2 &&
@@ -407,10 +428,10 @@ test_expect_success 'automatic remapping to ancestor with filename filters' '
 	git branch moved-bar2 &&
 	test_commit change-foo2 foo 2 &&
 	git filter-branch -f \
-		moved-foo2 moved-bar2 A..master \
+		moved-foo2 moved-bar2 A..main \
 		-- -- foo &&
 	test $(git rev-parse moved-foo2) = $(git rev-parse moved-bar2) &&
-	test $(git rev-parse moved-foo2) = $(git rev-parse master^) &&
+	test $(git rev-parse moved-foo2) = $(git rev-parse main^) &&
 	test $orig_invariant = $(git rev-parse invariant2)
 '
 
@@ -445,10 +466,11 @@ test_expect_success 'rewrite submodule with another content' '
 '
 
 test_expect_success 'replace submodule revision' '
+	invalid=$(test_oid numeric) &&
 	git reset --hard original &&
 	git filter-branch -f --tree-filter \
 	    "if git ls-files --error-unmatch -- submod > /dev/null 2>&1
-	     then git update-index --cacheinfo 160000 0123456789012345678901234567890123456789 submod
+	     then git update-index --cacheinfo 160000 $invalid submod
 	     fi" HEAD &&
 	test $orig_head != $(git show-ref --hash --head HEAD)
 '
@@ -468,6 +490,51 @@ test_expect_success 'tree-filter deals with object name vs pathname ambiguity' '
 	ambiguous=$(git rev-list -1 HEAD) &&
 	git filter-branch --tree-filter "mv file.t $ambiguous" HEAD^.. &&
 	git show HEAD:$ambiguous
+'
+
+test_expect_success 'rewrite repository including refs that point at non-commit object' '
+	test_when_finished "git reset --hard original" &&
+	tree=$(git rev-parse HEAD^{tree}) &&
+	test_when_finished "git replace -d $tree" &&
+	echo A >new &&
+	git add new &&
+	new_tree=$(git write-tree) &&
+	git replace $tree $new_tree &&
+	git tag -a -m "tag to a tree" treetag $new_tree &&
+	git reset --hard HEAD &&
+	git filter-branch -f -- --all >filter-output 2>&1 &&
+	test_grep ! fatal filter-output
+'
+
+test_expect_success 'filter-branch handles ref deletion' '
+	git switch --orphan empty-commit &&
+	git commit --allow-empty -m "empty commit" &&
+	git tag empty &&
+	git branch to-delete &&
+	git filter-branch -f --prune-empty to-delete >out 2>&1 &&
+	test_grep "to-delete.*was deleted" out &&
+	test_must_fail git rev-parse --verify to-delete
+'
+
+test_expect_success 'filter-branch handles ref rewrite' '
+	git checkout empty &&
+	test_commit to-drop &&
+	git branch rewrite &&
+	git filter-branch -f \
+		--index-filter "git rm --ignore-unmatch --cached to-drop.t" \
+		 rewrite >out 2>&1 &&
+	test_grep "rewrite.*was rewritten" out &&
+	test_grep ! -i warning out &&
+	git diff-tree empty rewrite
+'
+
+test_expect_success 'filter-branch handles ancestor rewrite' '
+	test_commit to-exclude &&
+	git branch ancestor &&
+	git filter-branch -f ancestor -- :^to-exclude.t >out 2>&1 &&
+	test_grep "ancestor.*was rewritten" out &&
+	test_grep ! -i warning out &&
+	git diff-tree HEAD^ ancestor
 '
 
 test_done

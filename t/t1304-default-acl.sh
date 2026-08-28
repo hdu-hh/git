@@ -18,7 +18,7 @@ test_expect_success 'checking for a working acl setup' '
 	if setfacl -m d:m:rwx -m u:root:rwx . &&
 	   getfacl . | grep user:root:rwx &&
 	   touch should-have-readable-acl &&
-	   getfacl should-have-readable-acl | egrep "mask::?rw-"
+	   getfacl should-have-readable-acl | grep -E "mask::?rw-"
 	then
 		test_set_prereq SETFACL
 	fi
@@ -34,7 +34,7 @@ check_perms_and_acl () {
 	getfacl "$1" > actual &&
 	grep -q "user:root:rwx" actual &&
 	grep -q "user:${LOGNAME}:rwx" actual &&
-	egrep "mask::?r--" actual > /dev/null 2>&1 &&
+	grep -E "mask::?r--" actual > /dev/null 2>&1 &&
 	grep -q "group::---" actual || false
 }
 
@@ -54,7 +54,7 @@ test_expect_success SETFACL 'Setup test repo' '
 
 test_expect_success SETFACL 'Objects creation does not break ACLs with restrictive umask' '
 	# SHA1 for empty blob
-	check_perms_and_acl .git/objects/e6/9de29bb2d1d6434b8b29ae775ad8c2e48c5391
+	check_perms_and_acl .git/objects/$(echo $EMPTY_BLOB | sed -e "s,^\(..\),\1/,")
 '
 
 test_expect_success SETFACL 'git gc does not break ACLs with restrictive umask' '

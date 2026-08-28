@@ -1,7 +1,7 @@
 # Test routines for checking protocol disabling.
 
-# Test clone/fetch/push with GIT_ALLOW_PROTOCOL whitelist
-test_whitelist () {
+# Test clone/fetch/push with GIT_ALLOW_PROTOCOL environment variable
+test_allow_var () {
 	desc=$1
 	proto=$2
 	url=$3
@@ -147,29 +147,33 @@ test_config () {
 	# Test clone/fetch/push with protocol.allow user defined default
 	test_expect_success "clone $desc (enabled)" '
 		rm -rf tmp.git &&
-		git config --global protocol.allow always &&
+		test_config_global protocol.allow always &&
 		git clone --bare "$url" tmp.git
 	'
 
 	test_expect_success "fetch $desc (enabled)" '
+		test_config_global protocol.allow always &&
 		git -C tmp.git fetch
 	'
 
 	test_expect_success "push $desc (enabled)" '
+		test_config_global protocol.allow always &&
 		git -C tmp.git push origin HEAD:pushed
 	'
 
 	test_expect_success "push $desc (disabled)" '
-		git config --global protocol.allow never &&
+		test_config_global protocol.allow never &&
 		test_must_fail git -C tmp.git push origin HEAD:pushed
 	'
 
 	test_expect_success "fetch $desc (disabled)" '
+		test_config_global protocol.allow never &&
 		test_must_fail git -C tmp.git fetch
 	'
 
 	test_expect_success "clone $desc (disabled)" '
 		rm -rf tmp.git &&
+		test_config_global protocol.allow never &&
 		test_must_fail git clone --bare "$url" tmp.git
 	'
 }
@@ -179,7 +183,7 @@ test_config () {
 #   $2 - machine-readable name of the protocol
 #   $3 - the URL to try cloning
 test_proto () {
-	test_whitelist "$@"
+	test_allow_var "$@"
 
 	test_config "$@"
 }

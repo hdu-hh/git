@@ -1,5 +1,11 @@
-#include "cache.h"
+#define USE_THE_REPOSITORY_VARIABLE
+
+#include "test-tool.h"
 #include "dir.h"
+#include "hex.h"
+#include "read-cache-ll.h"
+#include "repository.h"
+#include "setup.h"
 
 static int compare_untracked(const void *a_, const void *b_)
 {
@@ -17,13 +23,13 @@ static int compare_dir(const void *a_, const void *b_)
 
 static void dump(struct untracked_cache_dir *ucd, struct strbuf *base)
 {
-	int i, len;
+	int len;
 	QSORT(ucd->untracked, ucd->untracked_nr, compare_untracked);
 	QSORT(ucd->dirs, ucd->dirs_nr, compare_dir);
 	len = base->len;
 	strbuf_addf(base, "%s/", ucd->name);
 	printf("%s %s", base->buf,
-	       sha1_to_hex(ucd->exclude_sha1));
+	       oid_to_hex(&ucd->exclude_oid));
 	if (ucd->recurse)
 		fputs(" recurse", stdout);
 	if (ucd->check_only)
@@ -31,34 +37,38 @@ static void dump(struct untracked_cache_dir *ucd, struct strbuf *base)
 	if (ucd->valid)
 		fputs(" valid", stdout);
 	printf("\n");
-	for (i = 0; i < ucd->untracked_nr; i++)
+	for (size_t i = 0; i < ucd->untracked_nr; i++)
 		printf("%s\n", ucd->untracked[i]);
-	for (i = 0; i < ucd->dirs_nr; i++)
+	for (size_t i = 0; i < ucd->dirs_nr; i++)
 		dump(ucd->dirs[i], base);
 	strbuf_setlen(base, len);
 }
 
-int cmd_main(int ac, const char **av)
+int cmd__dump_untracked_cache(int ac UNUSED, const char **av UNUSED)
 {
 	struct untracked_cache *uc;
 	struct strbuf base = STRBUF_INIT;
 
-	/* Hack to avoid modifying the untracked cache when we read it */
-	ignore_untracked_cache_config = 1;
+	/* Set core.untrackedCache=keep before setup_git_directory() */
+	xsetenv("GIT_CONFIG_COUNT", "1", 1);
+	xsetenv("GIT_CONFIG_KEY_0", "core.untrackedCache", 1);
+	xsetenv("GIT_CONFIG_VALUE_0", "keep", 1);
 
-	setup_git_directory();
-	if (read_cache() < 0)
+	setup_git_directory(the_repository);
+	if (repo_read_index(the_repository) < 0)
 		die("unable to read index file");
-	uc = the_index.untracked;
+	uc = the_repository->index->untracked;
 	if (!uc) {
 		printf("no untracked cache\n");
 		return 0;
 	}
-	printf("info/exclude %s\n", sha1_to_hex(uc->ss_info_exclude.sha1));
-	printf("core.excludesfile %s\n", sha1_to_hex(uc->ss_excludes_file.sha1));
+	printf("info/exclude %s\n", oid_to_hex(&uc->ss_info_exclude.oid));
+	printf("core.excludesfile %s\n", oid_to_hex(&uc->ss_excludes_file.oid));
 	printf("exclude_per_dir %s\n", uc->exclude_per_dir);
 	printf("flags %08x\n", uc->dir_flags);
 	if (uc->root)
 		dump(uc->root, &base);
+
+	strbuf_release(&base);
 	return 0;
 }

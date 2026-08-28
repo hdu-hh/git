@@ -3,10 +3,56 @@
 # Prime rerere database from existing merge commits
 
 me=rerere-train
-USAGE="$me rev-list-args"
+USAGE=$(cat <<-EOF
+usage: $me [--overwrite] <rev-list-args>
+
+    -h, --help            show the help
+    -o, --overwrite       overwrite any existing rerere cache
+EOF
+)
 
 SUBDIRECTORY_OK=Yes
-OPTIONS_SPEC=
+
+overwrite=0
+
+while test $# -gt 0
+do
+	opt="$1"
+	case "$opt" in
+	-h|--help)
+		echo "$USAGE"
+		exit 0
+		;;
+	-o|--overwrite)
+		overwrite=1
+		shift
+		break
+		;;
+	--)
+		shift
+		break
+		;;
+	*)
+		break
+		;;
+	esac
+done
+
+# Overwrite or help options are not valid except as first arg
+for opt in "$@"
+do
+	case "$opt" in
+	-h|--help)
+		echo "$USAGE"
+		exit 0
+		;;
+	-o|--overwrite)
+		echo "$USAGE"
+		exit 0
+		;;
+	esac
+done
+
 . "$(git --exec-path)/git-sh-setup"
 require_work_tree
 cd_to_toplevel
@@ -29,19 +75,23 @@ do
 		continue
 	fi
 	git checkout -q "$parent1^0"
-	if git merge $other_parents >/dev/null 2>&1
+	if git merge --no-gpg-sign $other_parents >/dev/null 2>&1
 	then
 		# Cleanly merges
 		continue
 	fi
+	if test $overwrite = 1
+	then
+		git rerere forget .
+	fi
 	if test -s "$GIT_DIR/MERGE_RR"
 	then
-		git show -s --pretty=format:"Learning from %h %s" "$commit"
+		git --no-pager show -s --format="Learning from %h %s" "$commit"
 		git rerere
 		git checkout -q $commit -- .
 		git rerere
 	fi
-	git reset -q --hard
+	git reset -q --hard  # Might nuke untracked files...
 done
 
 if test -z "$branch"

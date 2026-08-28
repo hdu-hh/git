@@ -5,10 +5,14 @@
 
 test_description='Test shared repository initialization'
 
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
+TEST_CREATE_REPO_NO_TEMPLATE=1
 . ./test-lib.sh
 
 # Remove a default ACL from the test dir if possible.
-setfacl -k . 2>/dev/null
+setfacl -k . 2>/dev/null || :
 
 # User must have read permissions to the repo -> failure on --shared=0400
 test_expect_success 'shared = 0400 (faulty permission u-w)' '
@@ -19,13 +23,10 @@ test_expect_success 'shared = 0400 (faulty permission u-w)' '
 	)
 '
 
-modebits () {
-	ls -l "$1" | sed -e 's|^\(..........\).*|\1|'
-}
-
 for u in 002 022
 do
 	test_expect_success POSIXPERM "shared=1 does not clear bits preset by umask $u" '
+		test_when_finished "rm -rf sub" &&
 		mkdir sub && (
 			cd sub &&
 			umask $u &&
@@ -43,14 +44,22 @@ do
 			;;
 		esac
 	'
-	rm -rf sub
 done
 
 test_expect_success 'shared=all' '
-	mkdir sub &&
-	cd sub &&
-	git init --shared=all &&
+	git init --template= --shared=all &&
 	test 2 = $(git config core.sharedrepository)
+'
+
+test_expect_success 'template cannot set core.bare' '
+	test_when_finished "rm -rf subdir" &&
+	test_when_finished "rm -rf templates" &&
+	test_config core.bare true &&
+	umask 0022 &&
+	mkdir -p templates/ &&
+	cp .git/config templates/config &&
+	git init --template=templates subdir &&
+	test_path_is_missing subdir/HEAD
 '
 
 test_expect_success POSIXPERM 'update-server-info honors core.sharedRepository' '
@@ -58,6 +67,7 @@ test_expect_success POSIXPERM 'update-server-info honors core.sharedRepository' 
 	git add a1 &&
 	test_tick &&
 	git commit -m a1 &&
+	mkdir .git/info &&
 	umask 0277 &&
 	git update-server-info &&
 	actual="$(ls -l .git/info/refs)" &&
@@ -88,8 +98,8 @@ do
 
 		rm -f .git/info/refs &&
 		git update-server-info &&
-		actual="$(modebits .git/info/refs)" &&
-		verbose test "x$actual" = "x-$y"
+		actual="$(test_modebits .git/info/refs)" &&
+		test "x$actual" = "x-$y"
 
 	'
 
@@ -98,8 +108,8 @@ do
 
 		rm -f .git/info/refs &&
 		git update-server-info &&
-		actual="$(modebits .git/info/refs)" &&
-		verbose test "x$actual" = "x-$x"
+		actual="$(test_modebits .git/info/refs)" &&
+		test "x$actual" = "x-$x"
 
 	'
 
@@ -111,27 +121,12 @@ test_expect_success POSIXPERM 'info/refs respects umask in unshared repo' '
 	umask 002 &&
 	git update-server-info &&
 	echo "-rw-rw-r--" >expect &&
-	modebits .git/info/refs >actual &&
+	test_modebits .git/info/refs >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success POSIXPERM 'git reflog expire honors core.sharedRepository' '
-	umask 077 &&
-	git config core.sharedRepository group &&
-	git reflog expire --all &&
-	actual="$(ls -l .git/logs/refs/heads/master)" &&
-	case "$actual" in
-	-rw-rw-*)
-		: happy
-		;;
-	*)
-		echo Ooops, .git/logs/refs/heads/master is not 0662 [$actual]
-		false
-		;;
-	esac
-'
-
 test_expect_success POSIXPERM 'forced modes' '
+	test_when_finished "rm -rf new" &&
 	mkdir -p templates/hooks &&
 	echo update-server-info >templates/hooks/post-update &&
 	chmod +x templates/hooks/post-update &&
@@ -141,6 +136,7 @@ test_expect_success POSIXPERM 'forced modes' '
 		cd new &&
 		umask 002 &&
 		git init --shared=0660 --template=../templates &&
+		test_path_is_file .git/hooks/post-update &&
 		>frotz &&
 		git add frotz &&
 		git commit -a -m initial &&
@@ -173,11 +169,12 @@ test_expect_success POSIXPERM 'forced modes' '
 '
 
 test_expect_success POSIXPERM 'remote init does not use config from cwd' '
+	test_when_finished "rm -rf child.git" &&
 	git config core.sharedrepository 0666 &&
 	umask 0022 &&
 	git init --bare child.git &&
 	echo "-rw-r--r--" >expect &&
-	modebits child.git/config >actual &&
+	test_modebits child.git/config >actual &&
 	test_cmp expect actual
 '
 
@@ -187,29 +184,29 @@ test_expect_success POSIXPERM 're-init respects core.sharedrepository (local)' '
 	echo whatever >templates/foo &&
 	git init --template=templates &&
 	echo "-rw-rw-rw-" >expect &&
-	modebits .git/foo >actual &&
+	test_modebits .git/foo >actual &&
 	test_cmp expect actual
 '
 
 test_expect_success POSIXPERM 're-init respects core.sharedrepository (remote)' '
-	rm -rf child.git &&
+	test_when_finished "rm -rf child.git" &&
 	umask 0022 &&
 	git init --bare --shared=0666 child.git &&
 	test_path_is_missing child.git/foo &&
-	git init --bare --template=../templates child.git &&
+	git init --bare --template=templates child.git &&
 	echo "-rw-rw-rw-" >expect &&
-	modebits child.git/foo >actual &&
+	test_modebits child.git/foo >actual &&
 	test_cmp expect actual
 '
 
 test_expect_success POSIXPERM 'template can set core.sharedrepository' '
-	rm -rf child.git &&
+	test_when_finished "rm -rf child.git" &&
 	umask 0022 &&
 	git config core.sharedrepository 0666 &&
 	cp .git/config templates/config &&
-	git init --bare --template=../templates child.git &&
+	git init --bare --template=templates child.git &&
 	echo "-rw-rw-rw-" >expect &&
-	modebits child.git/HEAD >actual &&
+	test_modebits child.git/HEAD >actual &&
 	test_cmp expect actual
 '
 

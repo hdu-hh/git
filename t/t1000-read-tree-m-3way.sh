@@ -71,6 +71,7 @@ In addition:
  DF: a special case, where A makes a directory and B makes a file.
 
 '
+
 . ./test-lib.sh
 . "$TEST_DIRECTORY"/lib-read-tree.sh
 . "$TEST_DIRECTORY"/lib-read-tree-m-3way.sh
@@ -128,7 +129,7 @@ cat >expected <<\EOF
 EOF
 
 check_result () {
-	git ls-files --stage | sed -e 's/ '"$_x40"' / X /' >current &&
+	git ls-files --stage | sed -e 's/ '"$OID_REGEX"' / X /' >current &&
 	test_cmp expected current
 }
 

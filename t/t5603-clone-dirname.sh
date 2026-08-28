@@ -1,6 +1,7 @@
 #!/bin/sh
 
 test_description='check output directory names used by git-clone'
+
 . ./test-lib.sh
 
 # we use a fake ssh wrapper that ignores the arguments
@@ -11,7 +12,9 @@ test_expect_success 'setup ssh wrapper' '
 	git upload-pack "$TRASH_DIRECTORY"
 	EOF
 	GIT_SSH="$TRASH_DIRECTORY/ssh-wrapper" &&
+	GIT_SSH_VARIANT=ssh &&
 	export GIT_SSH &&
+	export GIT_SSH_VARIANT &&
 	export TRASH_DIRECTORY
 '
 

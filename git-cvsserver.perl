@@ -15,7 +15,7 @@
 ####
 ####
 
-use 5.008;
+require v5.26;
 use strict;
 use warnings;
 use bytes;
@@ -26,7 +26,7 @@ use File::Path qw/rmtree/;
 use File::Basename;
 use Getopt::Long qw(:config require_order no_ignore_case);
 
-my $VERSION = '@@GIT_VERSION@@';
+my $VERSION = '@GIT_VERSION@';
 
 my $log = GITCVS::log->new();
 my $cfg;
@@ -152,7 +152,7 @@ $state->{allowed_roots} = [ @ARGV ];
 
 # don't export the whole system unless the users requests it
 if ($state->{'export-all'} && !@{$state->{allowed_roots}}) {
-    die "--export-all can only be used together with an explicit whitelist\n";
+    die "--export-all can only be used together with an explicit '<directory>...' list\n";
 }
 
 # Environment handling for running under git-shell
@@ -222,10 +222,11 @@ if ($state->{method} eq 'pserver') {
         open my $passwd, "<", $authdb or die $!;
         while (<$passwd>) {
             if (m{^\Q$user\E:(.*)}) {
-                if (crypt($user, descramble($password)) eq $1) {
+                my $hash = crypt(descramble($password), $1);
+                if (defined $hash and $hash eq $1) {
                     $auth_ok = 1;
                 }
-            };
+            }
         }
         close $passwd;
 
@@ -356,7 +357,7 @@ sub req_Root
        return 0;
     }
 
-    my @gitvars = `git config -l`;
+    my @gitvars = safe_pipe_capture(qw(git config -l));
     if ($?) {
        print "E problems executing git-config on the server -- this is not a git repository or the PATH is not set correctly.\n";
         print "E \n";
@@ -365,7 +366,7 @@ sub req_Root
     }
     foreach my $line ( @gitvars )
     {
-        next unless ( $line =~ /^(gitcvs)\.(?:(ext|pserver)\.)?([\w-]+)=(.*)$/ );
+        next unless ( $line =~ /^(gitcvs|extensions)\.(?:(ext|pserver)\.)?([\w-]+)=(.*)$/ );
         unless ($2) {
             $cfg->{$1}{$3} = $4;
         } else {
@@ -391,6 +392,9 @@ sub req_Root
     } else {
         $log->nofile();
     }
+
+    $state->{rawsz} = ($cfg->{'extensions'}{'objectformat'} || 'sha1') eq 'sha256' ? 32 : 20;
+    $state->{hexsz} = $state->{rawsz} * 2;
 
     return 1;
 }
@@ -841,7 +845,7 @@ sub req_Modified
     # Save the file data in $state
     $state->{entries}{$state->{directory}.$data}{modified_filename} = $filename;
     $state->{entries}{$state->{directory}.$data}{modified_mode} = $mode;
-    $state->{entries}{$state->{directory}.$data}{modified_hash} = `git hash-object $filename`;
+    $state->{entries}{$state->{directory}.$data}{modified_hash} = safe_pipe_capture('git','hash-object',$filename);
     $state->{entries}{$state->{directory}.$data}{modified_hash} =~ s/\s.*$//s;
 
     #$log->debug("req_Modified : file=$data mode=$mode size=$size");
@@ -943,7 +947,7 @@ sub req_co
 
     # Provide list of modules, if -c was used.
     if (exists $state->{opt}{c}) {
-        my $showref = `git show-ref --heads`;
+        my $showref = safe_pipe_capture(qw(git show-ref --heads));
         for my $line (split '\n', $showref) {
             if ( $line =~ m% refs/heads/(.*)$% ) {
                 print "M $1\t$1\n";
@@ -1181,7 +1185,7 @@ sub req_update
     # projects (heads in this case) to checkout.
     #
     if ($state->{module} eq '') {
-        my $showref = `git show-ref --heads`;
+        my $showref = safe_pipe_capture(qw(git show-ref --heads));
         print "E cvs update: Updating .\n";
         for my $line (split '\n', $showref) {
             if ( $line =~ m% refs/heads/(.*)$% ) {
@@ -1463,7 +1467,7 @@ sub req_update
                 # transmit file, format is single integer on a line by itself (file
                 # size) followed by the file contents
                 # TODO : we should copy files in blocks
-                my $data = `cat $mergedFile`;
+                my $data = safe_pipe_capture('cat', $mergedFile);
                 $log->debug("File size : " . length($data));
                 print length($data) . "\n";
                 print $data;
@@ -1579,9 +1583,9 @@ sub req_ci
                 $branchRef = "refs/heads/$stickyInfo->{tag}";
             }
 
-            $parenthash = `git show-ref -s $branchRef`;
+            $parenthash = safe_pipe_capture('git', 'show-ref', '-s', $branchRef);
             chomp $parenthash;
-            if ($parenthash !~ /^[0-9a-f]{40}$/)
+            if ($parenthash !~ /^[0-9a-f]{$state->{hexsz}}$/)
             {
                 if ( defined($stickyInfo) && defined($stickyInfo->{tag}) )
                 {
@@ -1687,7 +1691,7 @@ sub req_ci
         return;
     }
 
-    my $treehash = `git write-tree`;
+    my $treehash = safe_pipe_capture(qw(git write-tree));
     chomp $treehash;
 
     $log->debug("Treehash : $treehash, Parenthash : $parenthash");
@@ -1704,11 +1708,11 @@ sub req_ci
     }
     close $msg_fh;
 
-    my $commithash = `git commit-tree $treehash -p $parenthash < $msg_filename`;
+    my $commithash = safe_pipe_capture('git', 'commit-tree', $treehash, '-p', $parenthash, '-F', $msg_filename);
     chomp($commithash);
     $log->info("Commit hash : $commithash");
 
-    unless ( $commithash =~ /[a-zA-Z0-9]{40}/ )
+    unless ( $commithash =~ /[a-zA-Z0-9]{$state->{hexsz}}/ )
     {
         $log->warn("Commit failed (Invalid commit hash)");
         print "error 1 Commit failed (unknown reason)\n";
@@ -2146,7 +2150,7 @@ sub req_diff
                    ( $meta2->{revision} or "workingcopy" ));
 
         # TODO: Use --label instead of -L because -L is no longer
-        #  documented and may go away someday.  Not sure if there there are
+        #  documented and may go away someday.  Not sure if there are
         #  versions that only support -L, which would make this change risky?
         #  http://osdir.com/ml/bug-gnu-utils-gnu/2010-12/msg00060.html
         #    ("man diff" should actually document the best migration strategy,
@@ -2375,7 +2379,7 @@ sub req_annotate
         print "E ***************\n";
         while ( <ANNOTATE> )
         {
-            if (m/^([a-zA-Z0-9]{40})\t\([^\)]*\)(.*)$/i)
+            if (m/^([a-zA-Z0-9]{$state->{hexsz}})\t\([^\)]*\)(.*)$/i)
             {
                 my $commithash = $1;
                 my $data = $2;
@@ -2852,14 +2856,14 @@ sub transmitfile
         return;
     }
 
-    die "Need filehash" unless ( defined ( $filehash ) and $filehash =~ /^[a-zA-Z0-9]{40}$/ );
+    die "Need filehash" unless ( defined ( $filehash ) and $filehash =~ /^[a-zA-Z0-9]{$state->{hexsz}}$/ );
 
-    my $type = `git cat-file -t $filehash`;
+    my $type = safe_pipe_capture('git', 'cat-file', '-t', $filehash);
     chomp $type;
 
     die ( "Invalid type '$type' (expected 'blob')" ) unless ( defined ( $type ) and $type eq "blob" );
 
-    my $size = `git cat-file -s $filehash`;
+    my $size = safe_pipe_capture('git', 'cat-file', '-s', $filehash);
     chomp $size;
 
     $log->debug("transmitfile($filehash) size=$size, type=$type");
@@ -3040,9 +3044,9 @@ sub ensureWorkTree
     chdir $work->{emptyDir} or
         die "Unable to chdir to $work->{emptyDir}\n";
 
-    my $ver = `git show-ref -s refs/heads/$state->{module}`;
+    my $ver = safe_pipe_capture('git', 'show-ref', '-s', "refs/heads/$state->{module}");
     chomp $ver;
-    if ($ver !~ /^[0-9a-f]{40}$/)
+    if ($ver !~ /^[0-9a-f]{$state->{hexsz}}$/)
     {
         $log->warn("Error from git show-ref -s refs/head$state->{module}");
         print "error 1 cannot find the current HEAD of module";
@@ -3281,13 +3285,13 @@ sub open_blob_or_die
     }
     elsif( $srcType eq "sha1" )
     {
-        unless ( defined ( $name ) and $name =~ /^[a-zA-Z0-9]{40}$/ )
+        unless ( defined ( $name ) and $name =~ /^[a-zA-Z0-9]{$state->{hexsz}}$/ )
         {
             $log->warn("Need filehash");
             die "Need filehash\n";
         }
 
-        my $type = `git cat-file -t $name`;
+        my $type = safe_pipe_capture('git', 'cat-file', '-t', $name);
         chomp $type;
 
         unless ( defined ( $type ) and $type eq "blob" )
@@ -3296,7 +3300,7 @@ sub open_blob_or_die
             die ( "Invalid type '$type' (expected 'blob')" )
         }
 
-        my $size = `git cat-file -s $name`;
+        my $size = safe_pipe_capture('git', 'cat-file', '-s', $name);
         chomp $size;
 
         $log->debug("open_blob_or_die($name) size=$size, type=$type");
@@ -3404,6 +3408,22 @@ sub refHashEqual
     }
 
     return $out;
+}
+
+# an alternative to `command` that allows input to be passed as an array
+# to work around shell problems with weird characters in arguments
+
+sub safe_pipe_capture {
+
+    my @output;
+
+    if (my $pid = open my $child, '-|') {
+        @output = (<$child>);
+        close $child or die join(' ',@_).": $! $?";
+    } else {
+        exec(@_) or die "$! $?"; # exec() can fail the executable can't be found
+    }
+    return wantarray ? @output : join('',@output);
 }
 
 
@@ -3587,6 +3607,22 @@ package GITCVS::updater;
 use strict;
 use warnings;
 use DBI;
+our $_use_fsync;
+
+# n.b. consider using Git.pm
+sub use_fsync {
+    if (!defined($_use_fsync)) {
+        my $x = $ENV{GIT_TEST_FSYNC};
+        if (defined $x) {
+            local $ENV{GIT_CONFIG};
+            delete $ENV{GIT_CONFIG};
+            my $v = ::safe_pipe_capture('git', '-c', "test.fsync=$x",
+                                        qw(config --type=bool test.fsync));
+            $_use_fsync = defined($v) ? ($v eq "true\n") : 1;
+        }
+    }
+    $_use_fsync;
+}
 
 =head1 METHODS
 
@@ -3656,6 +3692,9 @@ sub new
                                 $self->{dbuser},
                                 $self->{dbpass});
     die "Error connecting to database\n" unless defined $self->{dbh};
+    if ($self->{dbdriver} eq 'SQLite' && !use_fsync()) {
+        $self->{dbh}->do('PRAGMA synchronous = OFF');
+    }
 
     $self->{tables} = {};
     foreach my $table ( keys %{$self->{dbh}->table_info(undef,undef,undef,'TABLE')->fetchall_hashref('TABLE_NAME')} )
@@ -3797,11 +3836,11 @@ sub update
     # first lets get the commit list
     $ENV{GIT_DIR} = $self->{git_path};
 
-    my $commitsha1 = `git rev-parse $self->{module}`;
+    my $commitsha1 = ::safe_pipe_capture('git', 'rev-parse', $self->{module});
     chomp $commitsha1;
 
-    my $commitinfo = `git cat-file commit $self->{module} 2>&1`;
-    unless ( $commitinfo =~ /tree\s+[a-zA-Z0-9]{40}/ )
+    my $commitinfo = ::safe_pipe_capture('git', 'cat-file', 'commit', $self->{module});
+    unless ( $commitinfo =~ /tree\s+[a-zA-Z0-9]{$state->{hexsz}}/ )
     {
         die("Invalid module '$self->{module}'");
     }
@@ -3882,7 +3921,7 @@ sub update
                     # several candidate merge bases. let's assume
                     # that the first one is the best one.
 		    my $base = eval {
-			    safe_pipe_capture('git', 'merge-base',
+			    ::safe_pipe_capture('git', 'merge-base',
 						 $lastpicked, $parent);
 		    };
 		    # The two branches may not be related at all,
@@ -3941,7 +3980,7 @@ sub update
             while ( <FILELIST> )
             {
 		chomp;
-                unless ( /^:\d{6}\s+([0-7]{6})\s+[a-f0-9]{40}\s+([a-f0-9]{40})\s+(\w)$/o )
+                unless ( /^:\d{6}\s+([0-7]{6})\s+[a-f0-9]{$state->{hexsz}}\s+([a-f0-9]{$state->{hexsz}})\s+(\w)$/o )
                 {
                     die("Couldn't process git-diff-tree line : $_");
                 }
@@ -4609,11 +4648,11 @@ sub getmeta
             $db_query->execute($filename, $intRev);
             $meta = $db_query->fetchrow_hashref;
         }
-        elsif ( $revision =~ /^2\.1\.1\.2000(\.[1-3][0-9][0-9]){20}$/ )
+        elsif ( $revision =~ /^2\.1\.1\.2000(\.[1-3][0-9][0-9]){$state->{rawsz}}$/ )
         {
             my ($commitHash)=($revision=~/^2\.1\.1\.2000(.*)$/);
             $commitHash=~s/\.([0-9]+)/sprintf("%02x",$1-100)/eg;
-            if($commitHash=~/^[0-9a-f]{40}$/)
+            if($commitHash=~/^[0-9a-f]{$state->{hexsz}}$/)
             {
                 return $self->getMetaFromCommithash($filename,$commitHash);
             }
@@ -4623,7 +4662,7 @@ sub getmeta
             $log->warning("failed get $revision with commithash=$commitHash");
             undef $revision;
         }
-        elsif ( $revision =~ /^[0-9a-f]{40}$/ )
+        elsif ( $revision =~ /^[0-9a-f]{$state->{hexsz}}$/ )
         {
             # Try DB first.  This is mostly only useful for req_annotate(),
             # which only calls this for stuff that should already be in
@@ -4642,7 +4681,7 @@ sub getmeta
             if(! $meta)
             {
                 my($revCommit)=$self->lookupCommitRef($revision);
-                if($revCommit=~/^[0-9a-f]{40}$/)
+                if($revCommit=~/^[0-9a-f]{$state->{hexsz}}$/)
                 {
                     return $self->getMetaFromCommithash($filename,$revCommit);
                 }
@@ -4656,7 +4695,7 @@ sub getmeta
         else
         {
             my($revCommit)=$self->lookupCommitRef($revision);
-            if($revCommit=~/^[0-9a-f]{40}$/)
+            if($revCommit=~/^[0-9a-f]{$state->{hexsz}}$/)
             {
                 return $self->getMetaFromCommithash($filename,$revCommit);
             }
@@ -4749,9 +4788,9 @@ sub getMetaFromCommithash
         return $retVal;
     }
 
-    my($fileHash)=safe_pipe_capture("git","rev-parse","$revCommit:$filename");
+    my($fileHash) = ::safe_pipe_capture("git","rev-parse","$revCommit:$filename");
     chomp $fileHash;
-    if(!($fileHash=~/^[0-9a-f]{40}$/))
+    if(!($fileHash=~/^[0-9a-f]{$state->{hexsz}}$/))
     {
         die "Invalid fileHash '$fileHash' looking up"
                     ." '$revCommit:$filename'\n";
@@ -4844,17 +4883,17 @@ sub lookupCommitRef
         return $commitHash;
     }
 
-    $commitHash=safe_pipe_capture("git","rev-parse","--verify","--quiet",
-                                  $self->unescapeRefName($ref));
+    $commitHash = ::safe_pipe_capture("git","rev-parse","--verify","--quiet",
+				      $self->unescapeRefName($ref));
     $commitHash=~s/\s*$//;
-    if(!($commitHash=~/^[0-9a-f]{40}$/))
+    if(!($commitHash=~/^[0-9a-f]{$state->{hexsz}}$/))
     {
         $commitHash=undef;
     }
 
     if( defined($commitHash) )
     {
-        my $type=safe_pipe_capture("git","cat-file","-t",$commitHash);
+        my $type = ::safe_pipe_capture("git","cat-file","-t",$commitHash);
         if( ! ($type=~/^commit\s*$/ ) )
         {
             $commitHash=undef;
@@ -4893,7 +4932,7 @@ sub commitmessage
     my $commithash = shift;
     my $tablename = $self->tablename("commitmsgs");
 
-    die("Need commithash") unless ( defined($commithash) and $commithash =~ /^[a-zA-Z0-9]{40}$/ );
+    die("Need commithash") unless ( defined($commithash) and $commithash =~ /^[a-zA-Z0-9]{$state->{hexsz}}$/ );
 
     my $db_query;
     $db_query = $self->{dbh}->prepare_cached("SELECT value FROM $tablename WHERE key=?",{},1);
@@ -4907,7 +4946,7 @@ sub commitmessage
         return $message;
     }
 
-    my @lines = safe_pipe_capture("git", "cat-file", "commit", $commithash);
+    my @lines = ::safe_pipe_capture("git", "cat-file", "commit", $commithash);
     shift @lines while ( $lines[0] =~ /\S/ );
     $message = join("",@lines);
     $message .= " " if ( $message =~ /\n$/ );
@@ -4947,13 +4986,13 @@ sub gethistorydense
     return $result;
 }
 
-=head2 escapeRefName
+=head2 unescapeRefName
 
-Apply an escape mechanism to compensate for characters that
+Undo an escape mechanism to compensate for characters that
 git ref names can have that CVS tags can not.
 
 =cut
-sub escapeRefName
+sub unescapeRefName
 {
     my($self,$refName)=@_;
 
@@ -4969,27 +5008,6 @@ sub escapeRefName
     #     a tag name.
     #   = "_-xx-" Where "xx" is the hexadecimal representation of the
     #     desired ASCII character byte. (for anything else)
-
-    if(! $refName=~/^[1-9][0-9]*(\.[1-9][0-9]*)*$/)
-    {
-        $refName=~s/_-/_-u--/g;
-        $refName=~s/\./_-p-/g;
-        $refName=~s%/%_-s-%g;
-        $refName=~s/[^-_a-zA-Z0-9]/sprintf("_-%02x-",$1)/eg;
-    }
-}
-
-=head2 unescapeRefName
-
-Undo an escape mechanism to compensate for characters that
-git ref names can have that CVS tags can not.
-
-=cut
-sub unescapeRefName
-{
-    my($self,$refName)=@_;
-
-    # see escapeRefName() for description of escape mechanism.
 
     $refName=~s/_-([spu]|[0-9a-f][0-9a-f])-/unescapeRefNameChar($1)/eg;
 
@@ -5054,25 +5072,6 @@ sub in_array
         }
     }
     return $retval;
-}
-
-=head2 safe_pipe_capture
-
-an alternative to `command` that allows input to be passed as an array
-to work around shell problems with weird characters in arguments
-
-=cut
-sub safe_pipe_capture {
-
-    my @output;
-
-    if (my $pid = open my $child, '-|') {
-        @output = (<$child>);
-        close $child or die join(' ',@_).": $! $?";
-    } else {
-        exec(@_) or die "$! $?"; # exec() can fail the executable can't be found
-    }
-    return wantarray ? @output : join('',@output);
 }
 
 =head2 mangle_dirname

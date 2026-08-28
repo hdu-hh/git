@@ -14,8 +14,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 #ifndef __EWOK_BITMAP_H__
 #define __EWOK_BITMAP_H__
@@ -74,12 +73,6 @@ void ewah_pool_free(struct ewah_bitmap *self);
 struct ewah_bitmap *ewah_new(void);
 
 /**
- * Clear all the bits in the bitmap. Does not free or resize
- * memory.
- */
-void ewah_clear(struct ewah_bitmap *self);
-
-/**
  * Free all the memory of the bitmap
  */
 void ewah_free(struct ewah_bitmap *self);
@@ -87,21 +80,11 @@ void ewah_free(struct ewah_bitmap *self);
 int ewah_serialize_to(struct ewah_bitmap *self,
 		      int (*write_fun)(void *out, const void *buf, size_t len),
 		      void *out);
-int ewah_serialize(struct ewah_bitmap *self, int fd);
-int ewah_serialize_native(struct ewah_bitmap *self, int fd);
 int ewah_serialize_strbuf(struct ewah_bitmap *self, struct strbuf *);
 
-int ewah_deserialize(struct ewah_bitmap *self, int fd);
-int ewah_read_mmap(struct ewah_bitmap *self, const void *map, size_t len);
+ssize_t ewah_read_mmap(struct ewah_bitmap *self, const void *map, size_t len);
 
 uint32_t ewah_checksum(struct ewah_bitmap *self);
-
-/**
- * Logical not (bitwise negation) in-place on the bitmap
- *
- * This operation is linear time based on the size of the bitmap.
- */
-void ewah_not(struct ewah_bitmap *self);
 
 /**
  * Call the given callback with the position of every single bit
@@ -165,22 +148,19 @@ void ewah_iterator_init(struct ewah_iterator *it, struct ewah_bitmap *parent);
  */
 int ewah_iterator_next(eword_t *next, struct ewah_iterator *it);
 
-void ewah_or(
-	struct ewah_bitmap *ewah_i,
-	struct ewah_bitmap *ewah_j,
-	struct ewah_bitmap *out);
+struct ewah_or_iterator {
+	struct ewah_iterator *its;
+	size_t nr;
+};
 
-void ewah_and_not(
-	struct ewah_bitmap *ewah_i,
-	struct ewah_bitmap *ewah_j,
-	struct ewah_bitmap *out);
+void ewah_or_iterator_init(struct ewah_or_iterator *it,
+			   struct ewah_bitmap **parents, size_t nr);
+
+int ewah_or_iterator_next(eword_t *next, struct ewah_or_iterator *it);
+
+void ewah_or_iterator_release(struct ewah_or_iterator *it);
 
 void ewah_xor(
-	struct ewah_bitmap *ewah_i,
-	struct ewah_bitmap *ewah_j,
-	struct ewah_bitmap *out);
-
-void ewah_and(
 	struct ewah_bitmap *ewah_i,
 	struct ewah_bitmap *ewah_j,
 	struct ewah_bitmap *out);
@@ -204,13 +184,21 @@ struct bitmap {
 };
 
 struct bitmap *bitmap_new(void);
+struct bitmap *bitmap_word_alloc(size_t word_alloc);
+struct bitmap *bitmap_dup(const struct bitmap *src);
 void bitmap_set(struct bitmap *self, size_t pos);
-void bitmap_clear(struct bitmap *self, size_t pos);
+void bitmap_unset(struct bitmap *self, size_t pos);
 int bitmap_get(struct bitmap *self, size_t pos);
-void bitmap_reset(struct bitmap *self);
 void bitmap_free(struct bitmap *self);
 int bitmap_equals(struct bitmap *self, struct bitmap *other);
-int bitmap_is_subset(struct bitmap *self, struct bitmap *super);
+int bitmap_equals_ewah(struct bitmap *self, struct ewah_bitmap *other);
+
+/*
+ * Both `bitmap_is_subset()` and `ewah_bitmap_is_subset()` return 1 if the set
+ * of bits in 'self' are a subset of the bits in 'other'. Returns 0 otherwise.
+ */
+int bitmap_is_subset(struct bitmap *self, struct bitmap *other);
+int ewah_bitmap_is_subset(struct ewah_bitmap *self, struct bitmap *other);
 
 struct ewah_bitmap * bitmap_to_ewah(struct bitmap *bitmap);
 struct bitmap *ewah_to_bitmap(struct ewah_bitmap *ewah);
@@ -219,7 +207,8 @@ void bitmap_and_not(struct bitmap *self, struct bitmap *other);
 void bitmap_or_ewah(struct bitmap *self, struct ewah_bitmap *other);
 void bitmap_or(struct bitmap *self, const struct bitmap *other);
 
-void bitmap_each_bit(struct bitmap *self, ewah_callback callback, void *data);
 size_t bitmap_popcount(struct bitmap *self);
+size_t ewah_bitmap_popcount(struct ewah_bitmap *self);
+int bitmap_is_empty(struct bitmap *self);
 
 #endif

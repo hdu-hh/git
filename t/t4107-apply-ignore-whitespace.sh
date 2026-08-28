@@ -3,9 +3,8 @@
 # Copyright (c) 2009 Giuseppe Bilotta
 #
 
-test_description='git-apply --ignore-whitespace.
+test_description='git-apply --ignore-whitespace.'
 
-'
 . ./test-lib.sh
 
 # This primes main.c file that indents without using HT at all.
@@ -176,6 +175,20 @@ test_expect_success 're-create file (with --ignore-whitespace)' '
 
 test_expect_success 'patch5 fails (--no-ignore-whitespace)' '
 	test_must_fail git apply --no-ignore-whitespace patch5.patch
+'
+
+test_expect_success 'apply --ignore-space-change --inaccurate-eof' '
+	echo 1 >file &&
+	git apply --ignore-space-change --inaccurate-eof <<-\EOF &&
+	diff --git a/file b/file
+	--- a/file
+	+++ b/file
+	@@ -1 +1 @@
+	-1
+	+2
+	EOF
+	printf 2 >expect &&
+	test_cmp expect file
 '
 
 test_done

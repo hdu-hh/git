@@ -1,4 +1,6 @@
 #ifndef PRECOMPOSE_UNICODE_H
+#define PRECOMPOSE_UNICODE_H
+
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <dirent.h>
@@ -12,11 +14,12 @@ typedef struct dirent_prec_psx {
 
 	/*
 	 * See http://pubs.opengroup.org/onlinepubs/9699919799/basedefs/dirent.h.html
-	 * NAME_MAX + 1 should be enough, but some systems have
-	 * NAME_MAX=255 and strlen(d_name) may return 508 or 510
-	 * Solution: allocate more when needed, see precompose_utf8_readdir()
+	 * Start with room for NAME_MAX + 1 bytes, but keep d_name as a
+	 * flexible array. Some systems have NAME_MAX=255 while strlen(d_name)
+	 * from readdir() may return 508 or 510 bytes. Grow the allocation as
+	 * needed in precompose_utf8_readdir().
 	 */
-	char   d_name[NAME_MAX+1];
+	char   d_name[FLEX_ARRAY];
 } dirent_prec_psx;
 
 
@@ -26,7 +29,8 @@ typedef struct {
 	struct dirent_prec_psx *dirent_nfc;
 } PREC_DIR;
 
-void precompose_argv(int argc, const char **argv);
+const char *precompose_argv_prefix(int argc, const char **argv, const char *prefix);
+const char *precompose_string_if_needed(const char *in);
 void probe_utf8_pathname_composition(void);
 
 PREC_DIR *precompose_utf8_opendir(const char *dirname);
@@ -41,5 +45,4 @@ int precompose_utf8_closedir(PREC_DIR *dirp);
 #define DIR PREC_DIR
 #endif /* PRECOMPOSE_UNICODE_C */
 
-#define  PRECOMPOSE_UNICODE_H
 #endif /* PRECOMPOSE_UNICODE_H */

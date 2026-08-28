@@ -1,53 +1,114 @@
 #ifndef CSUM_FILE_H
 #define CSUM_FILE_H
 
+#include "hash.h"
+#include "write-or-die.h"
+
 struct progress;
 
 /* A SHA1-protected file */
-struct sha1file {
+struct hashfile {
 	int fd;
 	int check_fd;
 	unsigned int offset;
-	git_SHA_CTX ctx;
+	struct git_hash_ctx ctx;
 	off_t total;
 	struct progress *tp;
 	const char *name;
 	int do_crc;
 	uint32_t crc32;
-	unsigned char buffer[8192];
+	size_t buffer_len;
+	unsigned char *buffer;
+	unsigned char *check_buffer;
+	const struct git_hash_algo *algop;
+
+	/**
+	 * If non-zero, skip_hash indicates that we should
+	 * not actually compute the hash for this hashfile and
+	 * instead only use it as a buffered write.
+	 */
+	int skip_hash;
 };
 
 /* Checkpoint */
-struct sha1file_checkpoint {
+struct hashfile_checkpoint {
 	off_t offset;
-	git_SHA_CTX ctx;
+	struct git_hash_ctx ctx;
 };
 
-extern void sha1file_checkpoint(struct sha1file *, struct sha1file_checkpoint *);
-extern int sha1file_truncate(struct sha1file *, struct sha1file_checkpoint *);
+void hashfile_checkpoint_init(struct hashfile *, struct hashfile_checkpoint *);
+void hashfile_checkpoint(struct hashfile *, struct hashfile_checkpoint *);
+int hashfile_truncate(struct hashfile *, struct hashfile_checkpoint *);
+void hashfile_checkpoint_release(struct hashfile_checkpoint *);
 
-/* sha1close flags */
-#define CSUM_CLOSE	1
-#define CSUM_FSYNC	2
+/* finalize_hashfile flags */
+#define CSUM_CLOSE		1
+#define CSUM_FSYNC		2
+#define CSUM_HASH_IN_STREAM	4
 
-extern struct sha1file *sha1fd(int fd, const char *name);
-extern struct sha1file *sha1fd_check(const char *name);
-extern struct sha1file *sha1fd_throughput(int fd, const char *name, struct progress *tp);
-extern int sha1close(struct sha1file *, unsigned char *, unsigned int);
-extern void sha1write(struct sha1file *, const void *, unsigned int);
-extern void sha1flush(struct sha1file *f);
-extern void crc32_begin(struct sha1file *);
-extern uint32_t crc32_end(struct sha1file *);
+struct hashfd_options {
+	/*
+	 * Throughput progress that counts the number of bytes that have been
+	 * hashed.
+	 */
+	struct progress *progress;
 
-static inline void sha1write_u8(struct sha1file *f, uint8_t data)
+	/* The length of the buffer that shall be used to read data. */
+	size_t buffer_len;
+};
+
+struct hashfile *hashfd_ext(const struct git_hash_algo *algop,
+			    int fd, const char *name,
+			    const struct hashfd_options *opts);
+struct hashfile *hashfd(const struct git_hash_algo *algop,
+			int fd, const char *name);
+struct hashfile *hashfd_check(const struct git_hash_algo *algop,
+			      const char *name);
+
+/*
+ * Free the hashfile without flushing its contents to disk. This only
+ * needs to be called when not calling `finalize_hashfile()`.
+ */
+void free_hashfile(struct hashfile *f);
+
+/*
+ * Finalize the hashfile by flushing data to disk and free'ing it.
+ */
+int finalize_hashfile(struct hashfile *, unsigned char *, enum fsync_component, unsigned int);
+void hashwrite(struct hashfile *, const void *, uint32_t);
+void hashflush(struct hashfile *f);
+void crc32_begin(struct hashfile *);
+uint32_t crc32_end(struct hashfile *);
+
+/* Verify checksum validity while reading. Returns non-zero on success. */
+int hashfile_checksum_valid(const struct git_hash_algo *algop,
+			    const unsigned char *data, size_t len);
+
+/*
+ * Returns the total number of bytes fed to the hashfile so far (including ones
+ * that have not been written out to the descriptor yet).
+ */
+static inline off_t hashfile_total(struct hashfile *f)
 {
-	sha1write(f, &data, sizeof(data));
+	return f->total + f->offset;
 }
 
-static inline void sha1write_be32(struct sha1file *f, uint32_t data)
+static inline void hashwrite_u8(struct hashfile *f, uint8_t data)
+{
+	hashwrite(f, &data, sizeof(data));
+}
+
+static inline void hashwrite_be32(struct hashfile *f, uint32_t data)
 {
 	data = htonl(data);
-	sha1write(f, &data, sizeof(data));
+	hashwrite(f, &data, sizeof(data));
+}
+
+static inline size_t hashwrite_be64(struct hashfile *f, uint64_t data)
+{
+	data = htonll(data);
+	hashwrite(f, &data, sizeof(data));
+	return sizeof(data);
 }
 
 #endif

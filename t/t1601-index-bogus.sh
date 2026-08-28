@@ -1,10 +1,11 @@
 #!/bin/sh
 
 test_description='test handling of bogus index entries'
+
 . ./test-lib.sh
 
 test_expect_success 'create tree with null sha1' '
-	tree=$(printf "160000 commit $_z40\\tbroken\\n" | git mktree)
+	tree=$(printf "160000 commit $ZERO_OID\\tbroken\\n" | git mktree)
 '
 
 test_expect_success 'read-tree refuses to read null sha1' '

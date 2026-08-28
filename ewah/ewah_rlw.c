@@ -14,9 +14,11 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
+
+#define DISABLE_SIGN_COMPARE_WARNINGS
+
 #include "git-compat-util.h"
 #include "ewok.h"
 #include "ewok_rlw.h"
@@ -104,12 +106,4 @@ size_t rlwit_discharge(
 	}
 
 	return index;
-}
-
-void rlwit_discharge_empty(struct rlw_iterator *it, struct ewah_bitmap *out)
-{
-	while (rlwit_word_size(it) > 0) {
-		ewah_add_empty_words(out, 0, rlwit_word_size(it));
-		rlwit_discard_first_words(it, rlwit_word_size(it));
-	}
 }

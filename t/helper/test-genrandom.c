@@ -4,9 +4,11 @@
  * Copyright (C) 2007 by Nicolas Pitre, licensed under the GPL version 2.
  */
 
+#include "test-tool.h"
 #include "git-compat-util.h"
+#include "parse.h"
 
-int cmd_main(int argc, const char **argv)
+int cmd__genrandom(int argc, const char **argv)
 {
 	unsigned long count, next = 0;
 	unsigned char *c;
@@ -21,7 +23,9 @@ int cmd_main(int argc, const char **argv)
 		next = next * 11 + *c;
 	} while (*c++);
 
-	count = (argc == 3) ? strtoul(argv[2], NULL, 0) : -1L;
+	count = ULONG_MAX;
+	if (argc == 3 && !git_parse_ulong(argv[2], &count))
+		return error_errno("cannot parse argument '%s'", argv[2]);
 
 	while (count--) {
 		next = next * 1103515245 + 12345;

@@ -1,11 +1,12 @@
 #!/bin/sh
 
 test_description='check quarantine of objects during push'
+
 . ./test-lib.sh
 
 test_expect_success 'create picky dest repo' '
 	git init --bare dest.git &&
-	write_script dest.git/hooks/pre-receive <<-\EOF
+	test_hook --setup -C dest.git pre-receive <<-\EOF
 	while read old new ref; do
 		test "$(git log -1 --format=%s $new)" = reject && exit 1
 	done
@@ -39,7 +40,7 @@ test_expect_success 'push to repo path with path separator (colon)' '
 	# so make it likely for us to generate a delta by having
 	# a non-trivial file with multiple versions.
 
-	test-genrandom foo 4096 >file.bin &&
+	test-tool genrandom foo 4096 >file.bin &&
 	git add file.bin &&
 	git commit -m bin &&
 
@@ -60,7 +61,7 @@ test_expect_success 'push to repo path with path separator (colon)' '
 
 test_expect_success 'updating a ref from quarantine is forbidden' '
 	git init --bare update.git &&
-	write_script update.git/hooks/pre-receive <<-\EOF &&
+	test_hook -C update.git pre-receive <<-\EOF &&
 	read old new refname
 	git update-ref refs/heads/unrelated $new
 	exit 1

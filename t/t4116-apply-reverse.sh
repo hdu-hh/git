@@ -7,19 +7,20 @@ test_description='git apply in reverse
 
 '
 
+
 . ./test-lib.sh
 
 test_expect_success setup '
 
-	for i in a b c d e f g h i j k l m n; do echo $i; done >file1 &&
-	perl -pe "y/ijk/\\000\\001\\002/" <file1 >file2 &&
+	test_write_lines a b c d e f g h i j k l m n >file1 &&
+	tr "ijk" "\000\001\002" <file1 >file2 &&
 
 	git add file1 file2 &&
 	git commit -m initial &&
 	git tag initial &&
 
-	for i in a b c g h i J K L m o n p q; do echo $i; done >file1 &&
-	perl -pe "y/mon/\\000\\001\\002/" <file1 >file2 &&
+	test_write_lines a b c g h i J K L m o n p q >file1 &&
+	tr "mon" "\000\001\002" <file1 >file2 &&
 
 	git commit -a -m second &&
 	git tag second &&
@@ -42,7 +43,7 @@ test_expect_success 'apply in reverse' '
 	git reset --hard second &&
 	git apply --reverse --binary --index patch &&
 	git diff >diff &&
-	test_cmp /dev/null diff
+	test_must_be_empty diff
 
 '
 

@@ -2,6 +2,7 @@
 
 test_description='git archive attribute pattern tests'
 
+TEST_CREATE_REPO_NO_TEMPLATE=1
 . ./test-lib.sh
 
 test_expect_exists() {
@@ -14,6 +15,7 @@ test_expect_missing() {
 
 test_expect_success 'setup' '
 	echo ignored >ignored &&
+	mkdir .git/info &&
 	echo ignored export-ignore >>.git/info/attributes &&
 	git add ignored &&
 
@@ -53,7 +55,8 @@ test_expect_success 'setup' '
 
 	git commit -m. &&
 
-	git clone --bare . bare &&
+	git clone --template= --bare . bare &&
+	mkdir bare/info &&
 	cp .git/info/attributes bare/info/attributes
 '
 
@@ -76,7 +79,7 @@ test_expect_missing	archive/deep/and/slashless/ &&
 test_expect_missing	archive/deep/and/slashless/foo &&
 test_expect_missing	archive/deep/with/wildcard/ &&
 test_expect_missing	archive/deep/with/wildcard/foo &&
-test_expect_exists	archive/one-level-lower/
+test_expect_missing	archive/one-level-lower/
 test_expect_missing	archive/one-level-lower/two-levels-lower/ignored-only-if-dir/
 test_expect_missing	archive/one-level-lower/two-levels-lower/ignored-ony-if-dir/ignored-by-ignored-dir
 

@@ -14,6 +14,7 @@
  */
 
 #include "git-compat-util.h"
+#include "trace2.h"
 
 /* Substitution of environment variables in shell format strings.
    Copyright (C) 2003-2007 Free Software Foundation, Inc.
@@ -30,8 +31,7 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software Foundation,
-   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.  */
+   along with this program; if not, see <https://www.gnu.org/licenses/>.  */
 
 /* closeout.c - close standard output and standard error
    Copyright (C) 1998-2007 Free Software Foundation, Inc.
@@ -47,8 +47,7 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software Foundation,
-   Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.  */
+   along with this program; if not, see <https://www.gnu.org/licenses/>.  */
 
 #include <errno.h>
 #include <stdio.h>
@@ -68,6 +67,8 @@ cmd_main (int argc, const char *argv[])
 {
   /* Default values for command line options.  */
   /* unsigned short int show_variables = 0; */
+
+  trace2_cmd_name("sh-i18n--envsubst");
 
   switch (argc)
 	{
@@ -103,12 +104,12 @@ cmd_main (int argc, const char *argv[])
   if (ferror (stderr) || fflush (stderr))
     {
       fclose (stderr);
-      exit (EXIT_FAILURE);
+      return (EXIT_FAILURE);
     }
   if (fclose (stderr) && errno != EBADF)
-    exit (EXIT_FAILURE);
+    return (EXIT_FAILURE);
 
-  exit (EXIT_SUCCESS);
+  return (EXIT_SUCCESS);
 }
 
 /* Parse the string and invoke the callback each time a $VARIABLE or
@@ -248,7 +249,7 @@ sorted_string_list_member (const string_list_ty *slp, const char *s)
 	{
 	  /* Here we know that if s is in the list, it is at an index j
 	     with j1 <= j < j2.  */
-	  size_t j = (j1 + j2) >> 1;
+	  size_t j = j1 + ((j2 - j1) >> 1);
 	  int result = strcmp (slp->item[j], s);
 
 	  if (result > 0)
@@ -396,7 +397,7 @@ subst_from_stdin (void)
 		  /* Substitute the variable's value from the environment.  */
 		  const char *env_value = getenv (buffer);
 
-		  if (env_value != NULL)
+		  if (env_value)
 		    fputs (env_value, stdout);
 		}
 	      else

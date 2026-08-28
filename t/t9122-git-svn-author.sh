@@ -1,14 +1,15 @@
 #!/bin/sh
 
 test_description='git svn authorship'
+
 . ./lib-git-svn.sh
 
 test_expect_success 'setup svn repository' '
 	svn_cmd checkout "$svnrepo" work.svn &&
 	(
 		cd work.svn &&
-		echo >file
-		svn_cmd add file
+		echo >file &&
+		svn_cmd add file &&
 		svn_cmd commit -m "first commit" file
 	)
 '
@@ -17,7 +18,7 @@ test_expect_success 'interact with it via git svn' '
 	mkdir work.git &&
 	(
 		cd work.git &&
-		git svn init "$svnrepo"
+		git svn init "$svnrepo" &&
 		git svn fetch &&
 
 		echo modification >file &&
@@ -56,15 +57,15 @@ test_expect_success 'interact with it via git svn' '
 	test "z$myself" = "z$unaffected" &&
 
 	# Make sure lack of --add-author-from did not add cruft
-	! grep "^    From: A U Thor " actual.2 &&
+	test_grep ! "^    From: A U Thor " actual.2 &&
 
 	# Make sure --add-author-from added cruft
-	grep "^    From: A U Thor " actual.3 &&
-	grep "^    From: A U Thor " actual.4 &&
+	test_grep "^    From: A U Thor " actual.3 &&
+	test_grep "^    From: A U Thor " actual.4 &&
 
 	# Make sure --add-author-from with --use-log-author affected
 	# the authorship information
-	grep "^Author: A U Thor " actual.4 &&
+	test_grep "^Author: A U Thor " actual.4 &&
 
 	# Make sure there are no commit messages with excess blank lines
 	test $(grep "^ " actual.2 | wc -l) = 3 &&
